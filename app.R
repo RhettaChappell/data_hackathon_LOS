@@ -7,16 +7,28 @@ library(shiny)
 
 # DATA and VISUALISATIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+library(ggrepel)
+library(forcats)
 library(tidyverse)
+library(plotly)
+library(data.table)
 library(reshape2)
 library(lubridate)
-
+library(scales)
+library(htmlTable)
+# SPATIAL:
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+library(rgdal) 
+library(raster)
+library(leaflet)
+library(sp)
 # ADMIN: 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 library(packrat)
 library(rsconnect)
 # SHINY
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 library(shinythemes)
 library(shinycssloaders)
 library(shinydashboard)
@@ -49,7 +61,10 @@ data_2 <- data %>%
          Patient_ID = as.factor(Patient_ID)) %>% 
   #create a variable which stores the actual LOS per patient
   group_by(Patient_ID) %>% 
-  mutate(Actual_LOS = Current_Time - Admit_Date) %>% 
+  mutate(Actual_LOS = Current_Time - Admit_Date,
+         Initial_prediction_days = Initial_LOS_prediction - Admit_Date,
+         Latest_prediction_days = Latest_LOS_prediction - Initial_LOS_prediction,
+         Latest_prediction_days = gsub("0", Initial_prediction_days, Latest_prediction_days)) %>% 
   ungroup() %>% 
   group_by(Patient_ID) %>% 
   #LOGIC - to colour the info boxes
@@ -58,13 +73,14 @@ data_2 <- data %>%
   #Red = the actual LOS is greater (in time/ length) than the most recent prediction
   #Grey = Most recent LOS prediction is  equal (in time/length) to the initial LOS prediction and the actual LOS time is shorter than the most recent prediction
   mutate(LOS_PRED_STATUS = case_when(
-                           as.character(Latest_LOS_prediction) < as.character(Initial_LOS_prediction) & as.character(Actual_LOS) < as.character(Latest_LOS_prediction) ~ "Green",
-                           as.character(Latest_LOS_prediction) == as.character(Initial_LOS_prediction) & as.character(Actual_LOS) < as.character(Latest_LOS_prediction) ~ "Grey",
-                           as.character(Latest_LOS_prediction) > as.character(Initial_LOS_prediction) & as.character(Actual_LOS) < as.character(Latest_LOS_prediction) ~ "Yellow",
-                           as.character(Actual_LOS) > as.character(Latest_LOS_prediction) ~ "Red"
+                           #need to set the difftime objects to numeric as we need to compare them as numbers
+                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days)  ~ "Green",
+                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days) ~ "Grey",
+                           as.numeric(Latest_prediction_days) >= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS)  <= as.numeric(Latest_prediction_days) ~ "Yellow",
+                           as.numeric(Actual_LOS)  > as.numeric(Latest_prediction_days)  ~ "Red"
   ))
-  
-         
+
+
 
 
 
@@ -192,7 +208,7 @@ server <- function(input, output, session) {
     
     output$Bed_1 <- renderUI({  
       x<- Pat_1()
-      if(x =="Green"){gradientBox(Pat_1C(),  
+      if(x =="Green"){gradientBox("Patient ID:", Pat_1C(),  
                      gradientColor = "maroon",
                      width = 2,
                      collapsible = FALSE,
@@ -201,7 +217,7 @@ server <- function(input, output, session) {
                      footer = HTML(paste("Latest LOS prediction:", Pat_1B())))
                      }
       else if ( x == "Yellow"){
-                   gradientBox(Pat_1C(),  
+                   gradientBox("Patient ID:", Pat_1C(),  
                    gradientColor = "yellow",
                    width = 2,
                    collapsible = FALSE,
@@ -210,7 +226,7 @@ server <- function(input, output, session) {
                    footer = HTML(paste("Latest LOS prediction:", Pat_1B())))
                    }
       else if ( x == "Red"){
-                   gradientBox(Pat_1C(), 
+                   gradientBox("Patient ID:", Pat_1C(),  
                    gradientColor = "red",
                    width = 2,
                    collapsible = FALSE,
@@ -219,7 +235,7 @@ server <- function(input, output, session) {
                    footer = HTML(paste("Latest LOS prediction:", Pat_1B())))
                    }
       else {
-                   gradientBox(Pat_1C(), 
+                   gradientBox("Patient ID:", Pat_1C(), 
                               width = 2,
                               collapsible = FALSE,
                               icon = "fa fa-bed",
@@ -254,7 +270,7 @@ server <- function(input, output, session) {
     
     output$Bed_2 <- renderUI({  
       x<- Pat_2()
-      if(x =="Green"){gradientBox(Pat_2C(),  
+      if(x =="Green"){gradientBox("Patient ID:", Pat_2C(),   
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -263,7 +279,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_2B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_2C(), 
+        gradientBox("Patient ID:", Pat_2C(),  
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -272,7 +288,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_2B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_2C(),  
+        gradientBox("Patient ID:", Pat_2C(), 
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -281,7 +297,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_2B())))
       }
       else {
-        gradientBox(Pat_2C(), 
+        gradientBox("Patient ID:", Pat_2C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -315,7 +331,7 @@ server <- function(input, output, session) {
     
     output$Bed_3 <- renderUI({  
       x<- Pat_3()
-      if(x =="Green"){gradientBox(Pat_3C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_3C(),  
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -324,7 +340,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_3B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_3C(), 
+        gradientBox("Patient ID:", Pat_3C(),
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -333,7 +349,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_3B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_3C(), 
+        gradientBox("Patient ID:", Pat_3C(),
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -342,7 +358,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_3B())))
       }
       else {
-        gradientBox(Pat_3C(),
+        gradientBox("Patient ID:", Pat_3C(),
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -377,7 +393,7 @@ server <- function(input, output, session) {
     
     output$Bed_4 <- renderUI({  
       x<- Pat_4()
-      if(x =="Green"){gradientBox(Pat_4C(),  
+      if(x =="Green"){gradientBox("Patient ID:", Pat_4C(),  
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -386,7 +402,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_4B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_4C(),  
+        gradientBox("Patient ID:", Pat_4C(),  
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -395,7 +411,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_4B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_4C(), 
+        gradientBox("Patient ID:", Pat_4C(),
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -404,7 +420,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_4B())))
       }
       else {
-        gradientBox(Pat_4C(), 
+        gradientBox("Patient ID:", Pat_4C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -438,7 +454,7 @@ server <- function(input, output, session) {
     
     output$Bed_5 <- renderUI({  
       x<- Pat_5()
-      if(x =="Green"){gradientBox(Pat_5C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_5C(),
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -447,7 +463,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_5B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_5C(),  
+        gradientBox("Patient ID:", Pat_5C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -456,7 +472,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_5B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_5C(), 
+        gradientBox("Patient ID:", Pat_5C(),
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -465,7 +481,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_5B())))
       }
       else {
-        gradientBox(Pat_5C(),
+        gradientBox("Patient ID:", Pat_5C(),
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -499,7 +515,7 @@ server <- function(input, output, session) {
     
     output$Bed_6 <- renderUI({  
       x<- Pat_6()
-      if(x =="Green"){gradientBox(Pat_6C(),  
+      if(x =="Green"){gradientBox("Patient ID:", Pat_6C(),  
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -508,7 +524,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_6B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_6C(), 
+        gradientBox("Patient ID:", Pat_6C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -517,7 +533,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_6B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_6C(), 
+        gradientBox("Patient ID:", Pat_6C(), 
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -526,7 +542,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_6B())))
       }
       else {
-        gradientBox(Pat_6C(), 
+        gradientBox("Patient ID:", Pat_6C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -561,7 +577,7 @@ server <- function(input, output, session) {
     
     output$Bed_7 <- renderUI({  
       x<- Pat_7()
-      if(x =="Green"){gradientBox(Pat_7C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_7C(), 
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -570,7 +586,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_7B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_7C(), 
+        gradientBox("Patient ID:", Pat_7C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -579,7 +595,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_7B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_7C(), 
+        gradientBox("Patient ID:", Pat_7C(), 
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -588,7 +604,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_7B())))
       }
       else {
-        gradientBox(Pat_7C(),
+        gradientBox("Patient ID:", Pat_7C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -623,7 +639,7 @@ server <- function(input, output, session) {
     
     output$Bed_8 <- renderUI({  
       x<- Pat_8()
-      if(x =="Green"){gradientBox(Pat_8C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_8C(), 
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -632,7 +648,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_8C(), 
+        gradientBox("Patient ID:", Pat_8C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -641,7 +657,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_8C(), 
+        gradientBox("Patient ID:", Pat_8C(), 
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -650,7 +666,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else {
-        gradientBox(Pat_8C(), 
+        gradientBox("Patient ID:", Pat_8C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -686,7 +702,7 @@ server <- function(input, output, session) {
     
     output$Bed_9 <- renderUI({  
       x<- Pat_9()
-      if(x =="Green"){gradientBox(Pat_9C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_9C(), 
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -695,7 +711,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_9B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_9C(), 
+        gradientBox("Patient ID:", Pat_9C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -704,7 +720,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_9B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_9C(), 
+        gradientBox("Patient ID:", Pat_9C(), 
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -713,7 +729,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_9B())))
       }
       else {
-        gradientBox(Pat_9C(),
+        gradientBox("Patient ID:", Pat_9C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
@@ -748,7 +764,7 @@ server <- function(input, output, session) {
     
     output$Bed_10 <- renderUI({  
       x<- Pat_10()
-      if(x =="Green"){gradientBox(Pat_10C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_10C(), 
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
@@ -757,7 +773,7 @@ server <- function(input, output, session) {
                                   footer = HTML(paste("Latest LOS prediction:", Pat_10B())))
       }
       else if ( x == "Yellow"){
-        gradientBox(Pat_10C(), 
+        gradientBox("Patient ID:", Pat_10C(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
@@ -766,7 +782,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_10B())))
       }
       else if ( x == "Red"){
-        gradientBox(Pat_10C(),  
+        gradientBox("Patient ID:", Pat_10C(),   
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
@@ -775,7 +791,7 @@ server <- function(input, output, session) {
                     footer = HTML(paste("Latest LOS prediction:", Pat_10B())))
       }
       else {
-        gradientBox(Pat_10C(), 
+        gradientBox("Patient ID:", Pat_10C(), 
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",

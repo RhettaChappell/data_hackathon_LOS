@@ -7,28 +7,16 @@ library(shiny)
 
 # DATA and VISUALISATIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(ggrepel)
-library(forcats)
 library(tidyverse)
-library(plotly)
-library(data.table)
 library(reshape2)
 library(lubridate)
-library(scales)
-library(htmlTable)
-# SPATIAL:
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(rgdal) 
-library(raster)
-library(leaflet)
-library(sp)
+
 # ADMIN: 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 library(packrat)
 library(rsconnect)
 # SHINY
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 library(shinythemes)
 library(shinycssloaders)
 library(shinydashboard)

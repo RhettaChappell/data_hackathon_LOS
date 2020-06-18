@@ -1,0 +1,13 @@
+name: Patient_LOS
+title: Patient_LOS
+username:
+account: regionalinnovationdatalab
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2464767
+bundleId: 3279719
+url: https://regionalinnovationdatalab.shinyapps.io/Patient_LOS/
+when: 1592348861.38527
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: README.md

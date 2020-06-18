@@ -4,31 +4,24 @@
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 library(shiny)
-
+#API
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+library(httr)
 # DATA and VISUALISATIONS
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(ggrepel)
 library(forcats)
 library(tidyverse)
-library(plotly)
 library(data.table)
 library(reshape2)
 library(lubridate)
-library(scales)
 library(htmlTable)
-# SPATIAL:
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(rgdal) 
-library(raster)
-library(leaflet)
-library(sp)
+
 # ADMIN: 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 library(packrat)
 library(rsconnect)
 # SHINY
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 library(shinythemes)
 library(shinycssloaders)
 library(shinydashboard)
@@ -45,28 +38,32 @@ library(htmltools)
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # READ IN DATA
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# #API
+# req <- httr::GET(url = "https://vqweudps2j.execute-api.ap-southeast-2.amazonaws.com/default/predict_los")
+# #PATIENT DEMOGRAPHICS
+# pat_info <- read.csv("data/patient_demographic.csv")
+
 #fake data 
-data<-read.csv("data/Fake_Data_Patient_LOS.csv")
+#data<-read.csv("data/Fake_Data_Patient_LOS.csv")
+data_sample_full <- read.csv("data/my_samp_demo_2.csv")
+#data_sample <- read.csv("data/10_pat_sample.csv")
 #check
-str(data)
+#str(data_sample)
 Current_Time <- today()
-data_2 <- data %>% 
+data_sample <- data_sample_full %>% 
+  select( -GENDER_SEX,
+          -ADMISSION_TYPE, -INSURANCE, -ETHNICITY,-MARITAL_STATUS,-DOB, -DOD,
+          -EXPIRE_FLAG) %>% 
   #set data types
-  mutate(Admit_Date = as.Date(Admit_Date, format = "%d/%m/%Y"),
-         Initial_LOS_prediction = as.Date(Initial_LOS_prediction, format = "%d/%m/%Y"),
-         Latest_LOS_prediction = as.Date(Latest_LOS_prediction, format = "%d/%m/%Y"),
-         Current_Time = Sys.Date(),
-         Medication_flag = as.factor(Medication_flag),
-         SEX = as.factor(SEX),
-         Patient_ID = as.factor(Patient_ID)) %>% 
+  mutate(Admit_Date = Sys.Date() - 1, 
+         Current_Time = Sys.Date()) %>% 
   #create a variable which stores the actual LOS per patient
-  group_by(Patient_ID) %>% 
+  group_by(SUBJECT_ID) %>% 
   mutate(Actual_LOS = Current_Time - Admit_Date,
-         Initial_prediction_days = Initial_LOS_prediction - Admit_Date,
          Latest_prediction_days = Latest_LOS_prediction - Initial_LOS_prediction,
-         Latest_prediction_days = gsub("0", Initial_prediction_days, Latest_prediction_days)) %>% 
+         Latest_prediction_days = gsub("0", Initial_LOS_prediction, Latest_prediction_days)) %>% 
   ungroup() %>% 
-  group_by(Patient_ID) %>% 
+  group_by(SUBJECT_ID) %>% 
   #LOGIC - to colour the info boxes
   #Green = Most recent LOS prediction is shorter (in time/ length) than the initial LOS prediction and the actual LOS time is shorter than the most recent prediction
   #Yellow = Most recent LOS prediction is longer (in time/ length) than the initial LOS prediction and the actual LOS time is shorter than the most recent prediction
@@ -74,14 +71,18 @@ data_2 <- data %>%
   #Grey = Most recent LOS prediction is  equal (in time/length) to the initial LOS prediction and the actual LOS time is shorter than the most recent prediction
   mutate(LOS_PRED_STATUS = case_when(
                            #need to set the difftime objects to numeric as we need to compare them as numbers
-                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days)  ~ "Green",
-                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days) ~ "Grey",
-                           as.numeric(Latest_prediction_days) >= as.numeric(Initial_prediction_days) & as.numeric(Actual_LOS)  <= as.numeric(Latest_prediction_days) ~ "Yellow",
+                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_LOS_prediction) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days)  ~ "Green",
+                           as.numeric(Latest_prediction_days) <= as.numeric(Initial_LOS_prediction) & as.numeric(Actual_LOS) <= as.numeric(Latest_prediction_days) ~ "Grey",
+                           as.numeric(Latest_prediction_days) >= as.numeric(Initial_LOS_prediction) & as.numeric(Actual_LOS)  <= as.numeric(Latest_prediction_days) ~ "Yellow",
                            as.numeric(Actual_LOS)  > as.numeric(Latest_prediction_days)  ~ "Red"
   ))
 
 
-
+data_demo<-data_sample_full %>% 
+  select(SUBJECT_ID,GENDER_SEX,
+         ADMISSION_TYPE, INSURANCE, ETHNICITY, MARITAL_STATUS,DOB) %>% 
+  mutate(DOB = as.Date(DOB, format = "%d/%m/%Y"))
+str(data_demo)
 
 
 #set columns to POSIXct date format for manipulation using lubridate
@@ -141,6 +142,17 @@ ui <- fluidPage(
         #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # DROP DOWN MENU AND FIRST ROW OF INFO BOXES One Per hospital bed/patient
         #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # fluidRow(
+        #   column(12, align = "centre",
+        #          selectInput(inputId = "PatientID", 
+        #                      label = "Select a patient ID to access their latest LOS prediction",
+        #                      choices = unique(data_sample$SUBJECT_ID)
+        #                      )# end select input
+        #          )#end column
+        # ),# end fluidrow
+        #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Ward view
+        #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         fluidRow(
             column(12, align = "left",
                    h1("Ward summary: LOS Prediction & Current Status"),
@@ -185,24 +197,24 @@ server <- function(input, output, session) {
   
 #Bed 1 patient 1~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
-    Pat_1 <- eventReactive(data_2$Patient_ID == "1_ID",  { 
+    Pat_1 <- eventReactive(data_sample$SUBJECT_ID == "11929",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "1_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "11929")
       dat2 <- dat$LOS_PRED_STATUS
       dat2
     })
     
-    Pat_1B <- eventReactive(data_2$Patient_ID == "1_ID",  { 
+    Pat_1B <- eventReactive(data_sample$SUBJECT_ID == "11929",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "1_ID")
-      dat2 <- dat$Latest_LOS_prediction
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "11929")
+      dat2 <- dat$Latest_prediction_days
       dat2
     })
     
-    Pat_1C <- eventReactive(data_2$Patient_ID == "1_ID",  { 
+    Pat_1C <- eventReactive(data_sample$SUBJECT_ID == "11929",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "1_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "11929")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -248,22 +260,22 @@ server <- function(input, output, session) {
     
     #Bed 2 patient 2~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_2 <- eventReactive(data_2$Patient_ID == "2_ID",  { 
+    Pat_2 <- eventReactive(data_sample$SUBJECT_ID == "22318",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "2_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "22318")
       dat2 <- dat$LOS_PRED_STATUS
       dat2
     })
-    Pat_2B <- eventReactive(data_2$Patient_ID == "2_ID",  { 
+    Pat_2B <- eventReactive(data_sample$SUBJECT_ID == "22318",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "2_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "22318")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
-    Pat_2C <- eventReactive(data_2$Patient_ID == "2_ID",  { 
+    Pat_2C <- eventReactive(data_sample$SUBJECT_ID == "22318",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "2_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "22318")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -309,22 +321,22 @@ server <- function(input, output, session) {
     
     #Bed 3 patient 3~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_3 <- eventReactive(data_2$Patient_ID == "3_ID",  { 
+    Pat_3 <- eventReactive(data_sample$SUBJECT_ID == "23008",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "3_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23008")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_3B <- eventReactive(data_2$Patient_ID == "3_ID",  { 
+    Pat_3B <- eventReactive(data_sample$SUBJECT_ID == "23008",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "3_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23008")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
-    Pat_3C <- eventReactive(data_2$Patient_ID == "3_ID",  { 
+    Pat_3C <- eventReactive(data_sample$SUBJECT_ID == "23008",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "3_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23008")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -371,22 +383,22 @@ server <- function(input, output, session) {
     
     #Bed 4 patient 4~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_4 <- eventReactive(data_2$Patient_ID == "4_ID",  { 
+    Pat_4 <- eventReactive(data_sample$SUBJECT_ID == "23489",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "4_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23489")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_4B <- eventReactive(data_2$Patient_ID == "4_ID",  { 
+    Pat_4B <- eventReactive(data_sample$SUBJECT_ID == "23489",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "4_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23489")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
-    Pat_4C <- eventReactive(data_2$Patient_ID == "4_ID",  { 
+    Pat_4C <- eventReactive(data_sample$SUBJECT_ID == "23489",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "4_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "23489")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -432,22 +444,22 @@ server <- function(input, output, session) {
     
     #Bed 5 patient 5~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_5 <- eventReactive(data_2$Patient_ID == "5_ID",  { 
+    Pat_5 <- eventReactive(data_sample$SUBJECT_ID == "24687",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "5_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "24687")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_5B <- eventReactive(data_2$Patient_ID == "5_ID",  { 
+    Pat_5B <- eventReactive(data_sample$SUBJECT_ID == "24687",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "5_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "24687")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
-    Pat_5C <- eventReactive(data_2$Patient_ID == "5_ID",  { 
+    Pat_5C <- eventReactive(data_sample$SUBJECT_ID == "24687",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "5_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "24687")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -493,22 +505,22 @@ server <- function(input, output, session) {
     
     #Bed 6 patient 6~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_6 <- eventReactive(data_2$Patient_ID == "6_ID",  { 
+    Pat_6 <- eventReactive(data_sample$SUBJECT_ID == "29615",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "6_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "29615")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_6B <- eventReactive(data_2$Patient_ID == "6_ID",  { 
+    Pat_6B <- eventReactive(data_sample$SUBJECT_ID == "29615",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "6_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "29615")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
-    Pat_6C <- eventReactive(data_2$Patient_ID == "6_ID",  { 
+    Pat_6C <- eventReactive(data_sample$SUBJECT_ID == "29615",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "6_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "29615")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -554,23 +566,23 @@ server <- function(input, output, session) {
     
     #Bed 7 patient 7~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_7 <- eventReactive(data_2$Patient_ID == "7_ID",  { 
+    Pat_7 <- eventReactive(data_sample$SUBJECT_ID == "42843",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "7_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "42843")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_7B <- eventReactive(data_2$Patient_ID == "7_ID",  { 
+    Pat_7B <- eventReactive(data_sample$SUBJECT_ID == "42843",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "7_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "42843")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
     
-    Pat_7C <- eventReactive(data_2$Patient_ID == "7_ID",  { 
+    Pat_7C <- eventReactive(data_sample$SUBJECT_ID == "42843",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "7_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "42843")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -616,86 +628,126 @@ server <- function(input, output, session) {
     
     #Bed 8 patient 8~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_8 <- eventReactive(data_2$Patient_ID == "8_ID",  { 
+    Pat_8 <- eventReactive(data_sample$SUBJECT_ID == "66818",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "8_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "66818")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_8B <- eventReactive(data_2$Patient_ID == "8_ID",  { 
+    Pat_8B <- eventReactive(data_sample$SUBJECT_ID == "66818",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "8_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "66818")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
     
-    Pat_8C <- eventReactive(data_2$Patient_ID == "8_ID",  { 
+    Pat_8C <- eventReactive(data_sample$SUBJECT_ID == "66818",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "8_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "66818")
+      dat2 <- dat$SUBJECT_ID
+      dat2
+    })
+    
+    Pat_8D <- eventReactive(data_demo$SUBJECT_ID == "66818",  { 
+      #store the subsetted data in an object  - we will use this later to return a list of colours
+      dat <- subset(data_demo, data_demo$SUBJECT_ID == "66818")
+      dat2 <- dat$GENDER_SEX
+      dat2
+    })
+    
+    Pat_8E <- eventReactive(data_demo$SUBJECT_ID == "66818",  { 
+      #store the subsetted data in an object  - we will use this later to return a list of colours
+      dat <- subset(data_demo, data_demo$SUBJECT_ID == "66818")
+      dat2 <- dat$DOB
+      dat2
+    })
+    
+    Pat_8F <- eventReactive(data_demo$SUBJECT_ID == "66818",  { 
+      #store the subsetted data in an object  - we will use this later to return a list of colours
+      dat <- subset(data_demo, data_demo$SUBJECT_ID == "66818")
+      dat2 <- dat$ADMISSION_TYPE
+      dat2
+    })
+    
+    Pat_8G <- eventReactive(data_demo$SUBJECT_ID == "66818",  { 
+      #store the subsetted data in an object  - we will use this later to return a list of colours
+      dat <- subset(data_demo, data_demo$SUBJECT_ID == "66818")
+      dat2 <- dat$MARITAL_STATUS
+      dat2
+    })
+    
+    Pat_8H <- eventReactive(data_demo$SUBJECT_ID == "66818",  { 
+      #store the subsetted data in an object  - we will use this later to return a list of colours
+      dat <- subset(data_demo, data_demo$SUBJECT_ID == "66818")
+      dat2 <- dat$ETHNICITY
       dat2
     })
     
     
+    
     output$Bed_8 <- renderUI({  
       x<- Pat_8()
-      if(x =="Green"){gradientBox("Patient ID:", Pat_8C(), 
+      if(x =="Green"){gradientBox("Patient ID:", Pat_8C(), "LOS (days):", Pat_8B(),
                                   gradientColor = "maroon",
                                   width = 2,
                                   collapsible = FALSE,
                                   icon = "fa fa-bed",
-                                  title = tags$p(style = "font-size: 18px;","Bed #8:"),
+                                  title = tags$p(style = "font-size: 16px;","Bed #8:"),
                                   footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else if ( x == "Yellow"){
-        gradientBox("Patient ID:", Pat_8C(), 
+        gradientBox("Patient ID:", Pat_8C(), "LOS (days):", Pat_8B(), 
                     gradientColor = "yellow",
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
-                    title = tags$p(style = "font-size: 18px;","Bed #8:"),
+                    title = tags$p(style = "font-size: 16px;","Bed #8:"),
                     footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else if ( x == "Red"){
-        gradientBox("Patient ID:", Pat_8C(), 
+        gradientBox("Patient ID:", Pat_8C(), "LOS (days):", Pat_8B(),  
                     gradientColor = "red",
                     width = 2,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
-                    title = tags$p(style = "font-size: 18px;","Bed #8:"),
+                    title = tags$p(style = "font-size: 16px;","Bed #8:"),
                     footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
       }
       else {
-        gradientBox("Patient ID:", Pat_8C(), 
-                    width = 2,
+        gradientBox(HTML(paste("Patient ID:", Pat_8C(), br(),"Latest LOS in days:", Pat_8B())),
+                    width = 3,
                     collapsible = FALSE,
                     icon = "fa fa-bed",
                     gradientColor = "purple",
-                    title = tags$p(style = "font-size: 18px;","Bed #8:"),
-                    footer = HTML(paste("Latest LOS prediction:", Pat_8B())))
+                    title = tags$p(style = "font-size: 16px;","Bed #8:"),
+                    footer = HTML(paste("Sex:",Pat_8D(), br(),
+                                        "Birthdate:",Pat_8E(), br(),
+                                        "Admission Type:",Pat_8F(),
+                                        "Martital Status:",Pat_8G(),
+                                        "Ethnicity:",Pat_8H())))
       }
     })    
     
     
     #Bed 9 patient 9~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_9 <- eventReactive(data_2$Patient_ID == "9_ID",  { 
+    Pat_9 <- eventReactive(data_sample$SUBJECT_ID == "68865",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "9_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "68865")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_9B <- eventReactive(data_2$Patient_ID == "9_ID",  { 
+    Pat_9B <- eventReactive(data_sample$SUBJECT_ID == "68865",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "9_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "68865")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
     
-    Pat_9C <- eventReactive(data_2$Patient_ID == "9_ID",  { 
+    Pat_9C <- eventReactive(data_sample$SUBJECT_ID == "68865",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "9_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "68865")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
@@ -741,23 +793,23 @@ server <- function(input, output, session) {
     
     #Bed 10 patient 10~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     
-    Pat_10 <- eventReactive(data_2$Patient_ID == "10_ID",  { 
+    Pat_10 <- eventReactive(data_sample$SUBJECT_ID == "98643",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "10_ID")
-      dat2 <- dat$LOS_PRED_STATUS
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "98643")
+      dat2 <- dat$LOS
       dat2
     })
-    Pat_10B <- eventReactive(data_2$Patient_ID == "10_ID",  { 
+    Pat_10B <- eventReactive(data_sample$SUBJECT_ID == "98643",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "10_ID")
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "98643")
       dat2 <- dat$Latest_LOS_prediction
       dat2
     })
     
-    Pat_10C <- eventReactive(data_2$Patient_ID == "10_ID",  { 
+    Pat_10C <- eventReactive(data_sample$SUBJECT_ID == "98643",  { 
       #store the subsetted data in an object  - we will use this later to return a list of colours
-      dat <- subset(data_2, data_2$Patient_ID == "10_ID")
-      dat2 <- dat$Patient_ID
+      dat <- subset(data_sample, data_sample$SUBJECT_ID == "98643")
+      dat2 <- dat$SUBJECT_ID
       dat2
     })
     
